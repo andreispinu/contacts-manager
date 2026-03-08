@@ -7,6 +7,7 @@ import Contacts from './pages/Contacts';
 import ContactDetail from './pages/ContactDetail';
 import ContactForm from './pages/ContactForm';
 import Import from './pages/Import';
+import Connectors from './pages/Connectors';
 
 function ProtectedRoutes() {
   const { isAuthenticated } = useAuth();
@@ -20,6 +21,7 @@ function ProtectedRoutes() {
         <Route path="/contacts/:id" element={<ContactDetail />} />
         <Route path="/contacts/:id/edit" element={<ContactForm />} />
         <Route path="/import" element={<Import />} />
+        <Route path="/connectors" element={<Connectors />} />
         <Route path="*" element={<Navigate to="/" replace />} />
       </Routes>
     </Layout>
