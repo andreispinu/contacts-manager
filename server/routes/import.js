@@ -1,7 +1,7 @@
 const express = require('express');
 const router = express.Router();
 const multer = require('multer');
-const db = require('../database');
+const pool = require('../database');
 
 const upload = multer({ storage: multer.memoryStorage(), limits: { fileSize: 50 * 1024 * 1024 } });
 
@@ -14,53 +14,57 @@ function randomColor() {
   return AVATAR_COLORS[Math.floor(Math.random() * AVATAR_COLORS.length)];
 }
 
-function upsertContact(contact) {
-  // Try to find existing by phone or email
+async function upsertContact(client, contact) {
   let existing = null;
+
   if (contact.email) {
-    existing = db.prepare('SELECT id FROM contacts WHERE email = ?').get(contact.email);
+    const { rows } = await client.query('SELECT id FROM contacts WHERE email = $1', [contact.email]);
+    if (rows.length) existing = rows[0];
   }
   if (!existing && contact.phone) {
     const normalized = contact.phone.replace(/\D/g, '');
-    existing = db.prepare("SELECT id FROM contacts WHERE replace(replace(replace(replace(phone,' ',''),'-',''),'(',''),')','') = ?").get(normalized);
+    const { rows } = await client.query(
+      "SELECT id FROM contacts WHERE regexp_replace(phone, '[^0-9]', '', 'g') = $1",
+      [normalized]
+    );
+    if (rows.length) existing = rows[0];
   }
 
   if (existing) {
-    db.prepare(`
+    await client.query(`
       UPDATE contacts SET
-        name = COALESCE(NULLIF(?, ''), name),
-        email = COALESCE(NULLIF(?, ''), email),
-        phone = COALESCE(NULLIF(?, ''), phone),
+        name = COALESCE(NULLIF($1, ''), name),
+        email = COALESCE(NULLIF($2, ''), email),
+        phone = COALESCE(NULLIF($3, ''), phone),
         updated_at = CURRENT_TIMESTAMP
-      WHERE id = ?
-    `).run(contact.name || '', contact.email || '', contact.phone || '', existing.id);
+      WHERE id = $4
+    `, [contact.name || '', contact.email || '', contact.phone || '', existing.id]);
     return { id: existing.id, merged: true };
   }
 
-  const result = db.prepare(`
+  const { rows } = await client.query(`
     INSERT INTO contacts (name, email, phone, how_met, notes, avatar_color)
-    VALUES (?, ?, ?, ?, ?, ?)
-  `).run(
+    VALUES ($1, $2, $3, $4, $5, $6)
+    RETURNING id
+  `, [
     contact.name || 'Unknown',
     contact.email || null,
     contact.phone || null,
     contact.how_met || null,
     contact.notes || null,
-    randomColor()
-  );
-  return { id: result.lastInsertRowid, merged: false };
+    randomColor(),
+  ]);
+  return { id: rows[0].id, merged: false };
 }
 
 // Parse vCard content
 function parseVCF(content) {
   const contacts = [];
-  // Split on END:VCARD to get individual cards
   const cards = content.split(/END:VCARD/i);
 
   for (const card of cards) {
     if (!card.match(/BEGIN:VCARD/i)) continue;
 
-    // Unfold lines (RFC 6350: lines starting with space/tab are continuations)
     const unfolded = card.replace(/\r?\n[ \t]/g, '');
     const lines = unfolded.split(/\r?\n/);
 
@@ -95,11 +99,9 @@ function parseCSV(content) {
   const lines = content.split(/\r?\n/).filter(l => l.trim());
   if (lines.length < 2) return [];
 
-  // Parse header
   const header = parseCSVLine(lines[0]).map(h => h.toLowerCase().trim());
   const contacts = [];
 
-  // Map common column names
   const col = (names) => {
     for (const n of names) {
       const idx = header.findIndex(h => h.includes(n.toLowerCase()));
@@ -156,47 +158,57 @@ function parseCSVLine(line) {
 }
 
 // POST /api/import/vcf
-router.post('/vcf', upload.single('file'), (req, res) => {
+router.post('/vcf', upload.single('file'), async (req, res) => {
   if (!req.file) return res.status(400).json({ error: 'No file uploaded' });
 
   const content = req.file.buffer.toString('utf-8');
   const parsed = parseVCF(content);
 
+  const client = await pool.connect();
   let imported = 0, merged = 0;
-  const importMany = db.transaction(() => {
+  try {
+    await client.query('BEGIN');
     for (const contact of parsed) {
-      const { merged: wasMerged } = upsertContact(contact);
-      if (wasMerged) merged++;
-      else imported++;
+      const { merged: wasMerged } = await upsertContact(client, contact);
+      if (wasMerged) merged++; else imported++;
     }
-  });
-  importMany();
-
-  res.json({ total: parsed.length, imported, merged });
+    await client.query('COMMIT');
+    res.json({ total: parsed.length, imported, merged });
+  } catch (err) {
+    await client.query('ROLLBACK');
+    res.status(500).json({ error: err.message });
+  } finally {
+    client.release();
+  }
 });
 
 // POST /api/import/csv
-router.post('/csv', upload.single('file'), (req, res) => {
+router.post('/csv', upload.single('file'), async (req, res) => {
   if (!req.file) return res.status(400).json({ error: 'No file uploaded' });
 
   const content = req.file.buffer.toString('utf-8');
   const parsed = parseCSV(content);
 
+  const client = await pool.connect();
   let imported = 0, merged = 0;
-  const importMany = db.transaction(() => {
+  try {
+    await client.query('BEGIN');
     for (const contact of parsed) {
-      const { merged: wasMerged } = upsertContact(contact);
-      if (wasMerged) merged++;
-      else imported++;
+      const { merged: wasMerged } = await upsertContact(client, contact);
+      if (wasMerged) merged++; else imported++;
     }
-  });
-  importMany();
-
-  res.json({ total: parsed.length, imported, merged });
+    await client.query('COMMIT');
+    res.json({ total: parsed.length, imported, merged });
+  } catch (err) {
+    await client.query('ROLLBACK');
+    res.status(500).json({ error: err.message });
+  } finally {
+    client.release();
+  }
 });
 
 // POST /api/import/imessage — reads macOS Messages database
-router.post('/imessage', (req, res) => {
+router.post('/imessage', async (req, res) => {
   const os = require('os');
   const path = require('path');
   const fs = require('fs');
@@ -216,8 +228,8 @@ router.post('/imessage', (req, res) => {
     });
   }
 
+  const client = await pool.connect();
   try {
-    // Get handles (contacts) with their last message date and message count
     const handles = msgDb.prepare(`
       SELECT
         h.id as handle,
@@ -233,41 +245,41 @@ router.post('/imessage', (req, res) => {
 
     let imported = 0, merged = 0, skipped = 0;
 
-    const importMany = db.transaction(() => {
-      for (const handle of handles) {
-        const raw = handle.handle;
-        // Determine if phone or email
-        const isEmail = raw.includes('@');
-        const contact = {
-          name: raw,
-          email: isEmail ? raw : null,
-          phone: isEmail ? null : raw,
-          notes: `Imported from iMessage. ${handle.msg_count} messages.`,
-        };
+    await client.query('BEGIN');
+    for (const handle of handles) {
+      const raw = handle.handle;
+      const isEmail = raw.includes('@');
+      const contact = {
+        name: raw,
+        email: isEmail ? raw : null,
+        phone: isEmail ? null : raw,
+        notes: `Imported from iMessage. ${handle.msg_count} messages.`,
+      };
 
-        // Skip if looks like a group ID or short-code
-        if (!isEmail && raw.replace(/\D/g, '').length < 7) { skipped++; continue; }
+      if (!isEmail && raw.replace(/\D/g, '').length < 7) { skipped++; continue; }
 
-        const { merged: wasMerged } = upsertContact(contact);
+      const { merged: wasMerged } = await upsertContact(client, contact);
 
-        // Update last_contacted from iMessage history
-        if (handle.last_msg_date) {
-          const dateStr = handle.last_msg_date.split(' ')[0];
-          db.prepare(`
-            UPDATE contacts SET last_contacted = ?
-            WHERE id = (SELECT id FROM contacts WHERE ${isEmail ? 'email' : 'phone'} = ?)
-            AND (last_contacted IS NULL OR last_contacted < ?)
-          `).run(dateStr, raw, dateStr);
-        }
-
-        if (wasMerged) merged++; else imported++;
+      if (handle.last_msg_date) {
+        const dateStr = handle.last_msg_date.split(' ')[0];
+        const col = isEmail ? 'email' : 'phone';
+        await client.query(`
+          UPDATE contacts SET last_contacted = $1
+          WHERE ${col} = $2 AND (last_contacted IS NULL OR last_contacted < $1)
+        `, [dateStr, raw]);
       }
-    });
-    importMany();
+
+      if (wasMerged) merged++; else imported++;
+    }
+    await client.query('COMMIT');
 
     res.json({ total: handles.length, imported, merged, skipped });
+  } catch (err) {
+    await client.query('ROLLBACK');
+    res.status(500).json({ error: err.message });
   } finally {
     msgDb.close();
+    client.release();
   }
 });
 

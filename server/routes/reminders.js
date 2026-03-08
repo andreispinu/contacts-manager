@@ -1,57 +1,75 @@
 const express = require('express');
 const router = express.Router();
-const db = require('../database');
+const pool = require('../database');
 
 // GET /api/reminders — all upcoming reminders
-router.get('/', (req, res) => {
-  const reminders = db.prepare(`
-    SELECT r.*, c.name as contact_name, c.avatar_color
-    FROM reminders r
-    JOIN contacts c ON r.contact_id = c.id
-    WHERE r.completed = 0
-    ORDER BY r.due_date ASC
-  `).all();
-  res.json(reminders);
+router.get('/', async (req, res) => {
+  try {
+    const { rows } = await pool.query(`
+      SELECT r.*, c.name as contact_name, c.avatar_color
+      FROM reminders r
+      JOIN contacts c ON r.contact_id = c.id
+      WHERE r.completed = false
+      ORDER BY r.due_date ASC
+    `);
+    res.json(rows);
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
 });
 
-// POST /api/reminders (create for a contact)
-router.post('/', (req, res) => {
+// POST /api/reminders
+router.post('/', async (req, res) => {
   const { contact_id, due_date, message } = req.body;
   if (!contact_id || !due_date || !message) {
     return res.status(400).json({ error: 'contact_id, due_date, and message are required' });
   }
-  const contact = db.prepare('SELECT id FROM contacts WHERE id = ?').get(contact_id);
-  if (!contact) return res.status(404).json({ error: 'Contact not found' });
+  try {
+    const { rows: contacts } = await pool.query('SELECT id FROM contacts WHERE id = $1', [contact_id]);
+    if (!contacts.length) return res.status(404).json({ error: 'Contact not found' });
 
-  const result = db.prepare(
-    'INSERT INTO reminders (contact_id, due_date, message) VALUES (?, ?, ?)'
-  ).run(contact_id, due_date, message);
-
-  res.status(201).json(db.prepare('SELECT * FROM reminders WHERE id = ?').get(result.lastInsertRowid));
+    const { rows } = await pool.query(
+      'INSERT INTO reminders (contact_id, due_date, message) VALUES ($1, $2, $3) RETURNING *',
+      [contact_id, due_date, message]
+    );
+    res.status(201).json(rows[0]);
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
 });
 
 // PUT /api/reminders/:id
-router.put('/:id', (req, res) => {
-  const reminder = db.prepare('SELECT * FROM reminders WHERE id = ?').get(req.params.id);
-  if (!reminder) return res.status(404).json({ error: 'Reminder not found' });
+router.put('/:id', async (req, res) => {
+  try {
+    const { rows: existing } = await pool.query('SELECT * FROM reminders WHERE id = $1', [req.params.id]);
+    if (!existing.length) return res.status(404).json({ error: 'Reminder not found' });
 
-  const { completed, due_date, message } = req.body;
-  db.prepare(`
-    UPDATE reminders SET completed = ?, due_date = ?, message = ? WHERE id = ?
-  `).run(
-    completed !== undefined ? (completed ? 1 : 0) : reminder.completed,
-    due_date ?? reminder.due_date,
-    message ?? reminder.message,
-    req.params.id
-  );
+    const reminder = existing[0];
+    const { completed, due_date, message } = req.body;
 
-  res.json(db.prepare('SELECT * FROM reminders WHERE id = ?').get(req.params.id));
+    const { rows } = await pool.query(
+      'UPDATE reminders SET completed = $1, due_date = $2, message = $3 WHERE id = $4 RETURNING *',
+      [
+        completed !== undefined ? completed : reminder.completed,
+        due_date ?? reminder.due_date,
+        message ?? reminder.message,
+        req.params.id,
+      ]
+    );
+    res.json(rows[0]);
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
 });
 
 // DELETE /api/reminders/:id
-router.delete('/:id', (req, res) => {
-  db.prepare('DELETE FROM reminders WHERE id = ?').run(req.params.id);
-  res.json({ success: true });
+router.delete('/:id', async (req, res) => {
+  try {
+    await pool.query('DELETE FROM reminders WHERE id = $1', [req.params.id]);
+    res.json({ success: true });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
 });
 
 module.exports = router;
