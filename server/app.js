@@ -9,6 +9,7 @@ app.use(express.json());
 app.use(express.urlencoded({ extended: true }));
 
 app.use('/api/auth', require('./routes/auth'));
+app.use('/api/connectors', require('./routes/connectors'));
 app.use('/api/contacts', auth, require('./routes/contacts'));
 app.use('/api/reminders', auth, require('./routes/reminders'));
 app.use('/api/import', auth, require('./routes/import'));

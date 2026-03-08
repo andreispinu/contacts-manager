@@ -55,4 +55,10 @@ export const api = {
     return fetch(`${BASE}/import/csv`, { method: 'POST', headers: getAuthHeaders(), body: form }).then(r => r.json());
   },
   importiMessage: () => request('/import/imessage', { method: 'POST' }),
+
+  // Connectors
+  getConnectorStatus: () => request('/connectors/status'),
+  getGoogleAuthUrl: () => request('/connectors/google/auth'),
+  syncGoogleCalendar: () => request('/connectors/google/calendar/sync', { method: 'POST' }),
+  disconnectGoogle: () => request('/connectors/google/disconnect', { method: 'DELETE' }),
 };
