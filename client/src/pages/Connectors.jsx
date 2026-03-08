@@ -12,7 +12,7 @@ const CONNECTORS = [
   {
     id: 'imessage',
     name: 'iMessage',
-    description: 'Import contacts & last-contacted dates from your Mac's Messages history.',
+    description: "Import contacts and last-contacted dates from your Mac Messages history.",
     icon: MessageSquare,
     color: 'bg-blue-500',
     category: 'Messaging',
