@@ -2,16 +2,16 @@ const express = require('express');
 const router = express.Router();
 const pool = require('../database');
 
-// GET /api/reminders — all upcoming reminders
+// GET /api/reminders
 router.get('/', async (req, res) => {
   try {
     const { rows } = await pool.query(`
       SELECT r.*, c.name as contact_name, c.avatar_color
       FROM reminders r
       JOIN contacts c ON r.contact_id = c.id
-      WHERE r.completed = false
+      WHERE r.completed = false AND c.user_id = $1
       ORDER BY r.due_date ASC
-    `);
+    `, [req.userId]);
     res.json(rows);
   } catch (err) {
     res.status(500).json({ error: err.message });
@@ -25,7 +25,10 @@ router.post('/', async (req, res) => {
     return res.status(400).json({ error: 'contact_id, due_date, and message are required' });
   }
   try {
-    const { rows: contacts } = await pool.query('SELECT id FROM contacts WHERE id = $1', [contact_id]);
+    const { rows: contacts } = await pool.query(
+      'SELECT id FROM contacts WHERE id = $1 AND user_id = $2',
+      [contact_id, req.userId]
+    );
     if (!contacts.length) return res.status(404).json({ error: 'Contact not found' });
 
     const { rows } = await pool.query(
@@ -41,7 +44,11 @@ router.post('/', async (req, res) => {
 // PUT /api/reminders/:id
 router.put('/:id', async (req, res) => {
   try {
-    const { rows: existing } = await pool.query('SELECT * FROM reminders WHERE id = $1', [req.params.id]);
+    const { rows: existing } = await pool.query(`
+      SELECT r.* FROM reminders r
+      JOIN contacts c ON r.contact_id = c.id
+      WHERE r.id = $1 AND c.user_id = $2
+    `, [req.params.id, req.userId]);
     if (!existing.length) return res.status(404).json({ error: 'Reminder not found' });
 
     const reminder = existing[0];
@@ -65,7 +72,10 @@ router.put('/:id', async (req, res) => {
 // DELETE /api/reminders/:id
 router.delete('/:id', async (req, res) => {
   try {
-    await pool.query('DELETE FROM reminders WHERE id = $1', [req.params.id]);
+    await pool.query(`
+      DELETE FROM reminders WHERE id = $1
+      AND contact_id IN (SELECT id FROM contacts WHERE user_id = $2)
+    `, [req.params.id, req.userId]);
     res.json({ success: true });
   } catch (err) {
     res.status(500).json({ error: err.message });

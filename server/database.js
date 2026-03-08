@@ -8,8 +8,18 @@ const pool = new Pool({ connectionString: process.env.DATABASE_URL });
 
 async function initDb() {
   await pool.query(`
+    CREATE TABLE IF NOT EXISTS users (
+      id SERIAL PRIMARY KEY,
+      email TEXT UNIQUE NOT NULL,
+      password_hash TEXT NOT NULL,
+      created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+    )
+  `);
+
+  await pool.query(`
     CREATE TABLE IF NOT EXISTS contacts (
       id SERIAL PRIMARY KEY,
+      user_id INTEGER REFERENCES users(id) ON DELETE CASCADE,
       first_name TEXT NOT NULL DEFAULT '',
       last_name TEXT DEFAULT '',
       name TEXT NOT NULL DEFAULT '',
@@ -23,6 +33,11 @@ async function initDb() {
       created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
       updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
     )
+  `);
+
+  // Add user_id to existing contacts table if missing
+  await pool.query(`
+    ALTER TABLE contacts ADD COLUMN IF NOT EXISTS user_id INTEGER REFERENCES users(id) ON DELETE CASCADE
   `);
 
   await pool.query(`

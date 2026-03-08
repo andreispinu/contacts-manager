@@ -1,5 +1,6 @@
 import { NavLink } from 'react-router-dom';
-import { LayoutDashboard, Users, Bell, Upload } from 'lucide-react';
+import { LayoutDashboard, Users, Upload, LogOut } from 'lucide-react';
+import { useAuth } from '../context/AuthContext';
 
 const navItems = [
   { to: '/', icon: LayoutDashboard, label: 'Dashboard' },
@@ -8,6 +9,8 @@ const navItems = [
 ];
 
 export default function Layout({ children }) {
+  const { user, logout } = useAuth();
+
   return (
     <div className="flex h-screen overflow-hidden">
       {/* Sidebar */}
@@ -35,6 +38,16 @@ export default function Layout({ children }) {
             </NavLink>
           ))}
         </nav>
+        <div className="px-3 py-4 border-t border-gray-100">
+          <p className="text-xs text-gray-400 px-3 mb-2 truncate">{user?.email}</p>
+          <button
+            onClick={logout}
+            className="flex items-center gap-3 px-3 py-2 rounded-lg text-sm font-medium text-gray-600 hover:bg-gray-100 hover:text-gray-900 transition-colors w-full"
+          >
+            <LogOut size={18} />
+            Sign out
+          </button>
+        </div>
       </aside>
 
       {/* Main */}

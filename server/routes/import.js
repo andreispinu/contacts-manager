@@ -14,18 +14,21 @@ function randomColor() {
   return AVATAR_COLORS[Math.floor(Math.random() * AVATAR_COLORS.length)];
 }
 
-async function upsertContact(client, contact) {
+async function upsertContact(client, contact, userId) {
   let existing = null;
 
   if (contact.email) {
-    const { rows } = await client.query('SELECT id FROM contacts WHERE email = $1', [contact.email]);
+    const { rows } = await client.query(
+      'SELECT id FROM contacts WHERE email = $1 AND user_id = $2',
+      [contact.email, userId]
+    );
     if (rows.length) existing = rows[0];
   }
   if (!existing && contact.phone) {
     const normalized = contact.phone.replace(/\D/g, '');
     const { rows } = await client.query(
-      "SELECT id FROM contacts WHERE regexp_replace(phone, '[^0-9]', '', 'g') = $1",
-      [normalized]
+      "SELECT id FROM contacts WHERE regexp_replace(phone, '[^0-9]', '', 'g') = $1 AND user_id = $2",
+      [normalized, userId]
     );
     if (rows.length) existing = rows[0];
   }
@@ -43,10 +46,11 @@ async function upsertContact(client, contact) {
   }
 
   const { rows } = await client.query(`
-    INSERT INTO contacts (name, email, phone, how_met, notes, avatar_color)
-    VALUES ($1, $2, $3, $4, $5, $6)
+    INSERT INTO contacts (user_id, name, email, phone, how_met, notes, avatar_color)
+    VALUES ($1, $2, $3, $4, $5, $6, $7)
     RETURNING id
   `, [
+    userId,
     contact.name || 'Unknown',
     contact.email || null,
     contact.phone || null,
@@ -57,7 +61,6 @@ async function upsertContact(client, contact) {
   return { id: rows[0].id, merged: false };
 }
 
-// Parse vCard content
 function parseVCF(content) {
   const contacts = [];
   const cards = content.split(/END:VCARD/i);
@@ -94,7 +97,6 @@ function parseVCF(content) {
   return contacts;
 }
 
-// Parse CSV — handles Google Contacts format and simple format
 function parseCSV(content) {
   const lines = content.split(/\r?\n/).filter(l => l.trim());
   if (lines.length < 2) return [];
@@ -169,7 +171,7 @@ router.post('/vcf', upload.single('file'), async (req, res) => {
   try {
     await client.query('BEGIN');
     for (const contact of parsed) {
-      const { merged: wasMerged } = await upsertContact(client, contact);
+      const { merged: wasMerged } = await upsertContact(client, contact, req.userId);
       if (wasMerged) merged++; else imported++;
     }
     await client.query('COMMIT');
@@ -194,7 +196,7 @@ router.post('/csv', upload.single('file'), async (req, res) => {
   try {
     await client.query('BEGIN');
     for (const contact of parsed) {
-      const { merged: wasMerged } = await upsertContact(client, contact);
+      const { merged: wasMerged } = await upsertContact(client, contact, req.userId);
       if (wasMerged) merged++; else imported++;
     }
     await client.query('COMMIT');
@@ -207,7 +209,7 @@ router.post('/csv', upload.single('file'), async (req, res) => {
   }
 });
 
-// POST /api/import/imessage — reads macOS Messages database
+// POST /api/import/imessage
 router.post('/imessage', async (req, res) => {
   const os = require('os');
   const path = require('path');
@@ -258,15 +260,15 @@ router.post('/imessage', async (req, res) => {
 
       if (!isEmail && raw.replace(/\D/g, '').length < 7) { skipped++; continue; }
 
-      const { merged: wasMerged } = await upsertContact(client, contact);
+      const { merged: wasMerged } = await upsertContact(client, contact, req.userId);
 
       if (handle.last_msg_date) {
         const dateStr = handle.last_msg_date.split(' ')[0];
         const col = isEmail ? 'email' : 'phone';
         await client.query(`
           UPDATE contacts SET last_contacted = $1
-          WHERE ${col} = $2 AND (last_contacted IS NULL OR last_contacted < $1)
-        `, [dateStr, raw]);
+          WHERE ${col} = $2 AND user_id = $3 AND (last_contacted IS NULL OR last_contacted < $1)
+        `, [dateStr, raw, req.userId]);
       }
 
       if (wasMerged) merged++; else imported++;

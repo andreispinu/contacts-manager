@@ -1,8 +1,13 @@
 const BASE = '/api';
 
+function getAuthHeaders() {
+  const token = localStorage.getItem('token');
+  return token ? { Authorization: `Bearer ${token}` } : {};
+}
+
 async function request(path, options = {}) {
   const res = await fetch(`${BASE}${path}`, {
-    headers: { 'Content-Type': 'application/json', ...options.headers },
+    headers: { 'Content-Type': 'application/json', ...getAuthHeaders(), ...options.headers },
     ...options,
   });
   if (!res.ok) {
@@ -42,12 +47,12 @@ export const api = {
   importVCF: (file) => {
     const form = new FormData();
     form.append('file', file);
-    return fetch(`${BASE}/import/vcf`, { method: 'POST', body: form }).then(r => r.json());
+    return fetch(`${BASE}/import/vcf`, { method: 'POST', headers: getAuthHeaders(), body: form }).then(r => r.json());
   },
   importCSV: (file) => {
     const form = new FormData();
     form.append('file', file);
-    return fetch(`${BASE}/import/csv`, { method: 'POST', body: form }).then(r => r.json());
+    return fetch(`${BASE}/import/csv`, { method: 'POST', headers: getAuthHeaders(), body: form }).then(r => r.json());
   },
   importiMessage: () => request('/import/imessage', { method: 'POST' }),
 };

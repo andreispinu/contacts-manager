@@ -7,8 +7,6 @@ const AVATAR_COLORS = [
   '#f97316', '#eab308', '#22c55e', '#06b6d4', '#3b82f6'
 ];
 
-const FOLLOWUP_DAYS = { 5: 14, 4: 30, 3: 60, 2: 180, 1: 365 };
-
 async function saveTags(client, contactId, tags) {
   await client.query('DELETE FROM contact_tags WHERE contact_id = $1', [contactId]);
   for (const tagName of tags) {
@@ -25,16 +23,16 @@ async function saveTags(client, contactId, tags) {
   }
 }
 
-async function getContactWithTags(client, id) {
+async function getContactWithTags(client, id, userId) {
   const { rows } = await client.query(`
     SELECT c.*,
       STRING_AGG(DISTINCT t.name, ',') as tags_str
     FROM contacts c
     LEFT JOIN contact_tags ct ON c.id = ct.contact_id
     LEFT JOIN tags t ON ct.tag_id = t.id
-    WHERE c.id = $1
+    WHERE c.id = $1 AND c.user_id = $2
     GROUP BY c.id
-  `, [id]);
+  `, [id, userId]);
   if (!rows.length) return null;
   const contact = rows[0];
   contact.tags = contact.tags_str ? contact.tags_str.split(',') : [];
@@ -65,9 +63,9 @@ router.get('/', async (req, res) => {
     LEFT JOIN reminders r ON c.id = r.contact_id
   `;
 
-  const conditions = [];
-  const params = [];
-  let paramIdx = 1;
+  const conditions = ['c.user_id = $1'];
+  const params = [req.userId];
+  let paramIdx = 2;
 
   if (search) {
     conditions.push(`(c.first_name ILIKE $${paramIdx} OR c.last_name ILIKE $${paramIdx} OR c.name ILIKE $${paramIdx} OR c.email ILIKE $${paramIdx} OR c.phone ILIKE $${paramIdx} OR c.notes ILIKE $${paramIdx} OR c.how_met ILIKE $${paramIdx})`);
@@ -95,7 +93,7 @@ router.get('/', async (req, res) => {
     )`);
   }
 
-  if (conditions.length) query += ` WHERE ${conditions.join(' AND ')}`;
+  query += ` WHERE ${conditions.join(' AND ')}`;
   query += ` GROUP BY c.id`;
 
   const sortMap = {
@@ -121,7 +119,7 @@ router.get('/', async (req, res) => {
 // GET /api/contacts/:id
 router.get('/:id', async (req, res) => {
   try {
-    const contact = await getContactWithTags(pool, req.params.id);
+    const contact = await getContactWithTags(pool, req.params.id, req.userId);
     if (!contact) return res.status(404).json({ error: 'Contact not found' });
 
     const [{ rows: reminders }, { rows: interactions }] = await Promise.all([
@@ -148,16 +146,16 @@ router.post('/', async (req, res) => {
     const name = [first_name, last_name].filter(Boolean).join(' ');
     const avatar_color = AVATAR_COLORS[Math.floor(Math.random() * AVATAR_COLORS.length)];
     const { rows } = await client.query(`
-      INSERT INTO contacts (first_name, last_name, name, email, phone, how_met, relationship_strength, notes, avatar_color)
-      VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)
+      INSERT INTO contacts (user_id, first_name, last_name, name, email, phone, how_met, relationship_strength, notes, avatar_color)
+      VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)
       RETURNING id
-    `, [first_name, last_name || null, name, email || null, phone || null, how_met || null, relationship_strength || 3, notes || null, avatar_color]);
+    `, [req.userId, first_name, last_name || null, name, email || null, phone || null, how_met || null, relationship_strength || 3, notes || null, avatar_color]);
 
     const id = rows[0].id;
     await saveTags(client, id, Array.isArray(tags) ? tags : []);
     await client.query('COMMIT');
 
-    res.status(201).json(await getContactWithTags(pool, id));
+    res.status(201).json(await getContactWithTags(pool, id, req.userId));
   } catch (err) {
     await client.query('ROLLBACK');
     res.status(500).json({ error: err.message });
@@ -170,7 +168,10 @@ router.post('/', async (req, res) => {
 router.put('/:id', async (req, res) => {
   const client = await pool.connect();
   try {
-    const { rows: existing } = await client.query('SELECT * FROM contacts WHERE id = $1', [req.params.id]);
+    const { rows: existing } = await client.query(
+      'SELECT * FROM contacts WHERE id = $1 AND user_id = $2',
+      [req.params.id, req.userId]
+    );
     if (!existing.length) return res.status(404).json({ error: 'Contact not found' });
 
     const e = existing[0];
@@ -187,7 +188,7 @@ router.put('/:id', async (req, res) => {
         email = $4, phone = $5, how_met = $6,
         relationship_strength = $7, notes = $8, last_contacted = $9,
         updated_at = CURRENT_TIMESTAMP
-      WHERE id = $10
+      WHERE id = $10 AND user_id = $11
     `, [
       newFirstName,
       newLastName || null,
@@ -199,12 +200,13 @@ router.put('/:id', async (req, res) => {
       notes !== undefined ? (notes || null) : e.notes,
       last_contacted !== undefined ? (last_contacted || null) : e.last_contacted,
       req.params.id,
+      req.userId,
     ]);
 
     if (tags !== undefined) await saveTags(client, req.params.id, Array.isArray(tags) ? tags : []);
     await client.query('COMMIT');
 
-    res.json(await getContactWithTags(pool, req.params.id));
+    res.json(await getContactWithTags(pool, req.params.id, req.userId));
   } catch (err) {
     await client.query('ROLLBACK');
     res.status(500).json({ error: err.message });
@@ -216,7 +218,10 @@ router.put('/:id', async (req, res) => {
 // DELETE /api/contacts/:id
 router.delete('/:id', async (req, res) => {
   try {
-    const { rows } = await pool.query('SELECT id FROM contacts WHERE id = $1', [req.params.id]);
+    const { rows } = await pool.query(
+      'SELECT id FROM contacts WHERE id = $1 AND user_id = $2',
+      [req.params.id, req.userId]
+    );
     if (!rows.length) return res.status(404).json({ error: 'Contact not found' });
     await pool.query('DELETE FROM contacts WHERE id = $1', [req.params.id]);
     res.json({ success: true });
@@ -231,7 +236,10 @@ router.post('/:id/interactions', async (req, res) => {
   if (!type || !date) return res.status(400).json({ error: 'type and date required' });
 
   try {
-    const { rows: contacts } = await pool.query('SELECT id FROM contacts WHERE id = $1', [req.params.id]);
+    const { rows: contacts } = await pool.query(
+      'SELECT id FROM contacts WHERE id = $1 AND user_id = $2',
+      [req.params.id, req.userId]
+    );
     if (!contacts.length) return res.status(404).json({ error: 'Contact not found' });
 
     const { rows } = await pool.query(
@@ -253,7 +261,10 @@ router.post('/:id/interactions', async (req, res) => {
 // DELETE /api/contacts/:id/interactions/:iid
 router.delete('/:id/interactions/:iid', async (req, res) => {
   try {
-    await pool.query('DELETE FROM interactions WHERE id = $1 AND contact_id = $2', [req.params.iid, req.params.id]);
+    await pool.query(
+      'DELETE FROM interactions WHERE id = $1 AND contact_id = $2',
+      [req.params.iid, req.params.id]
+    );
     res.json({ success: true });
   } catch (err) {
     res.status(500).json({ error: err.message });
