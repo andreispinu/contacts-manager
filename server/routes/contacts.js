@@ -42,7 +42,7 @@ async function getContactWithTags(client, id, userId) {
 
 // GET /api/contacts
 router.get('/', async (req, res) => {
-  const { search, strength, tag, sort = 'name', overdue } = req.query;
+  const { search, strength, tag, category, sort = 'name', overdue } = req.query;
 
   let query = `
     SELECT c.*,
@@ -80,6 +80,11 @@ router.get('/', async (req, res) => {
   if (tag) {
     conditions.push(`c.id IN (SELECT ct2.contact_id FROM contact_tags ct2 JOIN tags t2 ON ct2.tag_id = t2.id WHERE t2.name = $${paramIdx})`);
     params.push(tag);
+    paramIdx++;
+  }
+  if (category) {
+    conditions.push(`$${paramIdx} = ANY(c.categories)`);
+    params.push(category);
     paramIdx++;
   }
   if (overdue === 'true') {
@@ -137,7 +142,7 @@ router.get('/:id', async (req, res) => {
 
 // POST /api/contacts
 router.post('/', async (req, res) => {
-  const { first_name, last_name = '', email, phone, how_met, relationship_strength, notes, tags = [] } = req.body;
+  const { first_name, last_name = '', email, phone, how_met, relationship_strength, notes, tags = [], categories = [] } = req.body;
   if (!first_name) return res.status(400).json({ error: 'First name is required' });
 
   const client = await pool.connect();
@@ -146,10 +151,10 @@ router.post('/', async (req, res) => {
     const name = [first_name, last_name].filter(Boolean).join(' ');
     const avatar_color = AVATAR_COLORS[Math.floor(Math.random() * AVATAR_COLORS.length)];
     const { rows } = await client.query(`
-      INSERT INTO contacts (user_id, first_name, last_name, name, email, phone, how_met, relationship_strength, notes, avatar_color)
-      VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)
+      INSERT INTO contacts (user_id, first_name, last_name, name, email, phone, how_met, relationship_strength, notes, avatar_color, categories)
+      VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)
       RETURNING id
-    `, [req.userId, first_name, last_name || null, name, email || null, phone || null, how_met || null, relationship_strength || 3, notes || null, avatar_color]);
+    `, [req.userId, first_name, last_name || null, name, email || null, phone || null, how_met || null, relationship_strength || 3, notes || null, avatar_color, categories]);
 
     const id = rows[0].id;
     await saveTags(client, id, Array.isArray(tags) ? tags : []);
@@ -175,7 +180,7 @@ router.put('/:id', async (req, res) => {
     if (!existing.length) return res.status(404).json({ error: 'Contact not found' });
 
     const e = existing[0];
-    const { first_name, last_name, email, phone, how_met, relationship_strength, notes, last_contacted, tags } = req.body;
+    const { first_name, last_name, email, phone, how_met, relationship_strength, notes, last_contacted, tags, categories } = req.body;
 
     const newFirstName = first_name !== undefined ? first_name : e.first_name;
     const newLastName = last_name !== undefined ? last_name : (e.last_name || '');
@@ -187,8 +192,8 @@ router.put('/:id', async (req, res) => {
         first_name = $1, last_name = $2, name = $3,
         email = $4, phone = $5, how_met = $6,
         relationship_strength = $7, notes = $8, last_contacted = $9,
-        updated_at = CURRENT_TIMESTAMP
-      WHERE id = $10 AND user_id = $11
+        categories = $10, updated_at = CURRENT_TIMESTAMP
+      WHERE id = $11 AND user_id = $12
     `, [
       newFirstName,
       newLastName || null,
@@ -199,6 +204,7 @@ router.put('/:id', async (req, res) => {
       relationship_strength ?? e.relationship_strength,
       notes !== undefined ? (notes || null) : e.notes,
       last_contacted !== undefined ? (last_contacted || null) : e.last_contacted,
+      categories !== undefined ? categories : (e.categories || []),
       req.params.id,
       req.userId,
     ]);

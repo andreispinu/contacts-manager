@@ -6,6 +6,12 @@ import Avatar from '../components/Avatar';
 import StarRating from '../components/StarRating';
 import { formatDistanceToNow, parseISO } from 'date-fns';
 
+const RELATIONSHIP_CATEGORIES = [
+  'Friends', 'Close Friends', 'Smart Friends', 'Family & Relatives',
+  'Colleagues', 'Trainer & Coach', 'Mentors', 'Acquaintances',
+  'References', 'Followers',
+];
+
 const SORT_OPTIONS = [
   { value: 'name', label: 'Name' },
   { value: 'strength', label: 'Relationship' },
@@ -22,6 +28,7 @@ export default function Contacts() {
   const search = searchParams.get('search') || '';
   const strength = searchParams.get('strength') || '';
   const tag = searchParams.get('tag') || '';
+  const category = searchParams.get('category') || '';
   const sort = searchParams.get('sort') || 'name';
   const overdue = searchParams.get('overdue') || '';
 
@@ -38,15 +45,16 @@ export default function Contacts() {
     if (search) params.search = search;
     if (strength) params.strength = strength;
     if (tag) params.tag = tag;
+    if (category) params.category = category;
     if (sort) params.sort = sort;
     if (overdue) params.overdue = overdue;
     api.getContacts(params).then(setContacts).finally(() => setLoading(false));
-  }, [search, strength, tag, sort, overdue]);
+  }, [search, strength, tag, category, sort, overdue]);
 
   useEffect(() => { fetchContacts(); }, [fetchContacts]);
   useEffect(() => { api.getTags().then(t => setTags(t.map(x => x.name))); }, []);
 
-  const hasFilters = search || strength || tag || overdue;
+  const hasFilters = search || strength || tag || category || overdue;
 
   return (
     <div className="p-6 max-w-5xl mx-auto">
@@ -118,6 +126,19 @@ export default function Contacts() {
             Needs follow-up
           </button>
 
+          {/* Category filters */}
+          {RELATIONSHIP_CATEGORIES.map(cat => (
+            <button
+              key={cat}
+              onClick={() => setParam('category', category === cat ? '' : cat)}
+              className={`px-2.5 py-1 rounded-md text-sm transition-colors ${
+                category === cat ? 'bg-violet-100 text-violet-700' : 'bg-gray-100 text-gray-600 hover:bg-gray-200'
+              }`}
+            >
+              {cat}
+            </button>
+          ))}
+
           {/* Tag filters */}
           {tags.map(t => (
             <button
@@ -184,9 +205,12 @@ export default function Contacts() {
                     <span>Last: {formatDistanceToNow(parseISO(contact.last_contacted), { addSuffix: true })}</span>
                   )}
                 </div>
-                {contact.tags?.length > 0 && (
+                {(contact.categories?.length > 0 || contact.tags?.length > 0) && (
                   <div className="flex gap-1 mt-1 flex-wrap">
-                    {contact.tags.map(t => (
+                    {contact.categories?.map(cat => (
+                      <span key={cat} className="text-xs px-1.5 py-0.5 bg-violet-50 text-violet-600 rounded">{cat}</span>
+                    ))}
+                    {contact.tags?.map(t => (
                       <span key={t} className="text-xs px-1.5 py-0.5 bg-gray-100 text-gray-500 rounded">{t}</span>
                     ))}
                   </div>

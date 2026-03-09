@@ -63,6 +63,7 @@ async function initDb() {
 
   await pool.query(`ALTER TABLE interactions ADD COLUMN IF NOT EXISTS source TEXT DEFAULT 'manual'`);
   await pool.query(`ALTER TABLE interactions ADD COLUMN IF NOT EXISTS external_id TEXT`);
+  await pool.query(`ALTER TABLE contacts ADD COLUMN IF NOT EXISTS categories TEXT[] DEFAULT '{}'`);
 
   await pool.query(`
     CREATE UNIQUE INDEX IF NOT EXISTS interactions_contact_external_idx

@@ -150,9 +150,12 @@ export default function ContactDetail() {
           )}
         </div>
 
-        {contact.tags?.length > 0 && (
+        {(contact.categories?.length > 0 || contact.tags?.length > 0) && (
           <div className="flex gap-1.5 mt-4 flex-wrap">
-            {contact.tags.map(t => (
+            {contact.categories?.map(cat => (
+              <span key={cat} className="px-2.5 py-1 bg-violet-50 text-violet-700 rounded-md text-sm">{cat}</span>
+            ))}
+            {contact.tags?.map(t => (
               <span key={t} className="px-2.5 py-1 bg-indigo-50 text-indigo-700 rounded-md text-sm">{t}</span>
             ))}
           </div>

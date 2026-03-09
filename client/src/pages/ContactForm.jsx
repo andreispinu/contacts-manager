@@ -6,6 +6,12 @@ import StarRating from '../components/StarRating';
 import TagInput from '../components/TagInput';
 import Avatar from '../components/Avatar';
 
+const RELATIONSHIP_CATEGORIES = [
+  'Friends', 'Close Friends', 'Smart Friends', 'Family & Relatives',
+  'Colleagues', 'Trainer & Coach', 'Mentors', 'Acquaintances',
+  'References', 'Followers',
+];
+
 export default function ContactForm() {
   const { id } = useParams();
   const navigate = useNavigate();
@@ -13,7 +19,7 @@ export default function ContactForm() {
 
   const [form, setForm] = useState({
     first_name: '', last_name: '', email: '', phone: '', how_met: '',
-    relationship_strength: 3, notes: '', tags: [],
+    relationship_strength: 3, notes: '', tags: [], categories: [],
   });
   const [allTags, setAllTags] = useState([]);
   const [loading, setLoading] = useState(isEdit);
@@ -33,6 +39,7 @@ export default function ContactForm() {
           relationship_strength: c.relationship_strength || 3,
           notes: c.notes || '',
           tags: c.tags || [],
+          categories: c.categories || [],
         });
       }).finally(() => setLoading(false));
     }
@@ -152,6 +159,28 @@ export default function ContactForm() {
                 suggestions={allTags}
               />
               <p className="text-xs text-gray-400 mt-1">Press Enter or comma to add. e.g. work, family, college</p>
+            </div>
+
+            <div className="col-span-2">
+              <label className="block text-sm font-medium text-gray-700 mb-2">Relationship Categories</label>
+              <div className="grid grid-cols-2 gap-2">
+                {RELATIONSHIP_CATEGORIES.map(cat => (
+                  <label key={cat} className="flex items-center gap-2 cursor-pointer group">
+                    <input
+                      type="checkbox"
+                      checked={form.categories.includes(cat)}
+                      onChange={e => {
+                        const next = e.target.checked
+                          ? [...form.categories, cat]
+                          : form.categories.filter(c => c !== cat);
+                        set('categories', next);
+                      }}
+                      className="w-4 h-4 rounded border-gray-300 text-indigo-600 focus:ring-indigo-500"
+                    />
+                    <span className="text-sm text-gray-700 group-hover:text-gray-900">{cat}</span>
+                  </label>
+                ))}
+              </div>
             </div>
 
             <div className="col-span-2">
